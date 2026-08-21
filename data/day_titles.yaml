@@ -1,0 +1,55 @@
+# Edit dates/places here any time. "note" is optional (e.g. for non-driving days).
+1:
+  date: 2026-06-29
+  from: Aarhus
+  to: Røsnæs
+2:
+  date: 2026-06-30
+  from: Røsnæs
+  to: Gurre
+3:
+  date: 2026-07-01
+  from: Gurre
+  to: København
+4:
+  date: 2026-07-02
+  from: København
+  to: København
+  note: Walking day
+5:
+  date: 2026-07-03
+  from: København
+  to: København
+  note: Walking day
+6:
+  date: 2026-07-04
+  from: København
+  to: Præstø
+7:
+  date: 2026-07-05
+  from: Præstø
+  to: Keldbylille
+8:
+  date: 2026-07-06
+  from: Keldbylille
+  to: Gedser
+9:
+  date: 2026-07-07
+  from: Gedser
+  to: Tågerup
+10:
+  date: 2026-07-08
+  from: Tågerup
+  to: Tåsinge
+11:
+  date: 2026-07-09
+  from: Tåsinge
+  to: Svendborg
+12:
+  date: 2026-07-10
+  from: Svendborg
+  to: Kerteminde
+13:
+  date: 2026-07-11
+  from: Kerteminde
+  to: Aarhus

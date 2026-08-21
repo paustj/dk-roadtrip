@@ -1,0 +1,7 @@
+[theme]
+base = "dark"
+primaryColor = "#b026ff"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#000000"
+textColor = "#f9f9f9"
+font = "Space Grotesk:https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap"
