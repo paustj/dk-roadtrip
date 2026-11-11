@@ -68,6 +68,7 @@ def selected_day() -> int | None:
 
 def select_day(day: int | None) -> None:
     st.session_state["day"] = day
+    st.session_state.pop("_viewer", None)
     # drop old map widget state so a stale click can't re-select a day
     for k in [k for k in st.session_state if str(k).startswith("trip_map_")]:
         del st.session_state[k]
@@ -264,12 +265,12 @@ def render_map(days, day_info) -> None:
 
 # ---------- sidebar ----------
 
-def _photo_data_uri(relative_path: str) -> str | None:
-    full_path = Path(__file__).resolve().parent / relative_path
+def _photo_data_uri(path: Path | str) -> str | None:
+    full_path = Path(__file__).resolve().parent / path
     if not full_path.exists():
         return None
     b64 = base64.b64encode(full_path.read_bytes()).decode("ascii")
-    ext = full_path.suffix.lstrip(".").lower() or "jpeg"
+    ext = full_path.suffix.lstrip(".").lower().replace("jpg", "jpeg") or "jpeg"
     return f"data:image/{ext};base64,{b64}"
 
 
@@ -306,6 +307,9 @@ def render_day_list(days, day_info) -> None:
         meta = [info.date.strftime("%a %d %b") if info.date else ""]
         if ferries_on(day):
             meta.append("ferry")
+        n_photos = data_store.count_day_photos(day)
+        if n_photos:
+            meta.append(f"{n_photos} photo{'s' if n_photos > 1 else ''}")
         if info.note:
             meta.append(info.note)
         km = f"{route.distance_km:.0f}<small>KM</small>" if route.has_route else "—<small>REST</small>"
@@ -365,15 +369,9 @@ def render_day_detail(day: int, days, day_info, all_stops) -> None:
             """
         )
 
-    st.markdown('<div class="section-label">Journal</div>', unsafe_allow_html=True)
-    story = data_store.load_journal_text(day)
-    if story:
-        st.markdown(f'<div class="story">{html.escape(story).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="empty">NO ENTRY YET</div>', unsafe_allow_html=True)
+    render_gallery(day)
 
     stops = all_stops.get(day, [])
-    photos = [s for s in stops if s.get("photo_path") and (Path(__file__).parent / s["photo_path"]).exists()]
     if stops:
         st.markdown('<div class="section-label">Stops</div>', unsafe_allow_html=True)
         for s in stops:
@@ -383,10 +381,69 @@ def render_day_detail(day: int, days, day_info, all_stops) -> None:
                 f'<div class="m">{html.escape(s.get("category", ""))}</div></div><div></div></div>',
                 unsafe_allow_html=True,
             )
-    if photos:
-        cols = st.columns(2)
-        for i, s in enumerate(photos):
-            cols[i % 2].image(str(Path(__file__).parent / s["photo_path"]), width="stretch")
+
+
+def _close_viewer() -> None:
+    st.session_state.pop("_viewer", None)
+
+
+@st.dialog(" ", width="large", on_dismiss=_close_viewer)
+def photo_viewer(day: int, photo_id: str) -> None:
+    photos = data_store.list_day_photos(day)
+    ids = [p["id"] for p in photos]
+    if photo_id not in ids:
+        st.rerun()
+    i = ids.index(photo_id)
+    html_block(f'<div class="kicker">Day {day:02d} · photo {i + 1} / {len(photos)}</div>')
+    st.image(str(photos[i]["path"]))
+
+    c1, c2, c3 = st.columns([1, 1, 1])
+    if c1.button("‹ Prev", key="pv_prev", disabled=i == 0, width="stretch"):
+        st.session_state["_viewer"] = (day, ids[i - 1])
+        st.rerun()
+    if c3.button("Next ›", key="pv_next", disabled=i == len(ids) - 1, width="stretch"):
+        st.session_state["_viewer"] = (day, ids[i + 1])
+        st.rerun()
+    if is_owner() and c2.button("Delete", key="pv_del", width="stretch"):
+        data_store.delete_day_photo(day, photo_id)
+        st.session_state.pop("_viewer", None)
+        st.rerun()
+
+
+def render_gallery(day: int) -> None:
+    photos = data_store.list_day_photos(day)
+    label = f"Photos · {len(photos)}" if photos else "Photos"
+    st.markdown(f'<div class="section-label">{label}</div>', unsafe_allow_html=True)
+
+    if not photos:
+        st.markdown('<div class="empty">NO PHOTOS YET</div>', unsafe_allow_html=True)
+    for row in range(0, len(photos), 3):
+        cols = st.columns(3, gap="small")
+        for col, p in zip(cols, photos[row:row + 3]):
+            with col, st.container(key=f"thumb_{day}_{p['id']}"):
+                st.markdown(f'<img class="thumb" src="{_photo_data_uri(p["thumb"])}">', unsafe_allow_html=True)
+                if st.button("Open", key=f"open_photo_{p['id']}"):
+                    st.session_state["_viewer"] = (day, p["id"])
+                    st.rerun()
+
+    if is_owner():
+        # a fresh key after each upload empties the uploader
+        n = st.session_state.get("_upload_n", 0)
+        files = st.file_uploader(
+            "Add photos", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True,
+            key=f"upload_{day}_{n}", label_visibility="collapsed",
+        )
+        if files:
+            with st.spinner("Saving photos…"):
+                for f in files:
+                    data_store.add_day_photo(day, f)
+            st.session_state["_upload_n"] = n + 1
+            st.rerun()
+
+    # the viewer is opened from session state so Prev/Next can reopen it after a rerun
+    viewer = st.session_state.get("_viewer")
+    if viewer and viewer[0] == day:
+        photo_viewer(*viewer)
 
 
 def is_owner() -> bool:
@@ -397,12 +454,7 @@ def render_owner_panel() -> None:
     st.markdown('<div class="section-label">Admin</div>', unsafe_allow_html=True)
     with st.expander("Owner access", expanded=False):
         if is_owner():
-            st.caption("Editing unlocked")
-            uploaded = st.file_uploader("Pin a photo on the map", type=["jpg", "jpeg", "png"], key="board_uploader")
-            if uploaded is not None and st.session_state.get("_last_board_upload") != uploaded.file_id:
-                data_store.add_photo_pin(uploaded)
-                st.session_state["_last_board_upload"] = uploaded.file_id
-                st.rerun()
+            st.caption("Editing unlocked. Open a day to add or delete photos.")
             if st.button("Lock", key="lock_btn", width="stretch"):
                 st.session_state["is_owner"] = False
                 st.rerun()
@@ -419,193 +471,12 @@ def render_owner_panel() -> None:
                 st.error("Wrong password.")
 
 
-# ---------- photo board (free photos pinned over the map) ----------
-
-_PHOTO_BOARD_JS = """
-export default function (component) {
-  const { data, parentElement, setTriggerValue } = component
-
-  let root = parentElement.querySelector('#photo-board-root')
-  if (!root) {
-    root = document.createElement('div')
-    root.id = 'photo-board-root'
-    root.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:500;'
-    parentElement.appendChild(root)
-  }
-  root.innerHTML = ''
-
-  const photos = (data && data.photos) || []
-  const isOwner = !!(data && data.is_owner)
-  const c = (data && data.colors) || {}
-
-  photos.forEach((photo) => {
-    const w = photo.w || 140
-    const h = photo.h || 140
-    const ox = photo.ox != null ? photo.ox : 50
-    const oy = photo.oy != null ? photo.oy : 50
-
-    const wrap = document.createElement('div')
-    wrap.style.cssText = `position:absolute;left:${photo.x}%;top:${photo.y}%;transform:translate(-50%,-50%);
-      width:${w}px;height:${h}px;pointer-events:${isOwner ? 'auto' : 'none'};touch-action:none;`
-
-    const img = document.createElement('img')
-    img.src = photo.src
-    img.draggable = false
-    img.style.cssText = `width:100%;height:100%;object-fit:cover;object-position:${ox}% ${oy}%;
-      border:2px solid ${c.amber};outline:1px solid ${c.navy};outline-offset:3px;
-      box-shadow:0 0 0 4px ${c.navy}, 0 0 0 5px ${c.line}, 0 10px 30px rgba(0,0,0,.6);display:block;cursor:grab;`
-    wrap.appendChild(img)
-
-    if (!isOwner) {
-      root.appendChild(wrap)
-      return
-    }
-
-    const btn = (txt, title, css) => {
-      const b = document.createElement('button')
-      b.textContent = txt
-      b.title = title
-      b.style.cssText = `position:absolute;width:22px;height:22px;border:1px solid ${c.amber};background:${c.navy};
-        color:${c.amber};cursor:pointer;font:500 12px monospace;line-height:1;padding:0;z-index:3;` + css
-      return b
-    }
-
-    const delBtn = btn('\\u00d7', 'Delete', 'top:-11px;right:-11px;')
-    delBtn.onclick = (e) => {
-      e.stopPropagation()
-      setTriggerValue('deleted', photo.id)
-    }
-    wrap.appendChild(delBtn)
-
-    let panMode = false
-    const cropBtn = btn('\\u2725', 'Toggle crop mode, then drag the photo to reposition it inside the frame', 'top:-11px;left:-11px;')
-    cropBtn.onclick = (e) => {
-      e.stopPropagation()
-      panMode = !panMode
-      cropBtn.style.background = panMode ? c.amber : c.navy
-      cropBtn.style.color = panMode ? c.navy : c.amber
-      img.style.cursor = panMode ? 'move' : 'grab'
-    }
-    wrap.appendChild(cropBtn)
-
-    const handle = document.createElement('div')
-    handle.title = 'Drag to resize'
-    handle.style.cssText = `position:absolute;bottom:-7px;right:-7px;width:14px;height:14px;background:${c.amber};
-      border:2px solid ${c.navy};cursor:nwse-resize;z-index:3;`
-    wrap.appendChild(handle)
-
-    let mode = null
-    let start = null
-    let current = { x: photo.x, y: photo.y, w, h, ox, oy }
-
-    wrap.onpointerdown = (e) => {
-      if (e.target === handle) mode = 'resize'
-      else if (e.target === img && panMode) mode = 'pan'
-      else if (e.target === img) mode = 'move'
-      else return
-
-      e.preventDefault()
-      try {
-        wrap.setPointerCapture(e.pointerId)
-      } catch (err) {
-        // some pointer types can't be captured; dragging still works
-      }
-      start = { clientX: e.clientX, clientY: e.clientY }
-      current = { x: photo.x, y: photo.y, w, h, ox, oy }
-    }
-
-    wrap.onpointermove = (e) => {
-      if (!mode) return
-      const dx = e.clientX - start.clientX
-      const dy = e.clientY - start.clientY
-
-      if (mode === 'move') {
-        current.x = (e.clientX / window.innerWidth) * 100
-        current.y = (e.clientY / window.innerHeight) * 100
-        wrap.style.left = current.x + '%'
-        wrap.style.top = current.y + '%'
-      } else if (mode === 'resize') {
-        current.w = Math.max(60, w + dx)
-        current.h = Math.max(60, h + dy)
-        wrap.style.width = current.w + 'px'
-        wrap.style.height = current.h + 'px'
-      } else if (mode === 'pan') {
-        current.ox = Math.min(100, Math.max(0, ox - dx / 2))
-        current.oy = Math.min(100, Math.max(0, oy - dy / 2))
-        img.style.objectPosition = `${current.ox}% ${current.oy}%`
-      }
-    }
-
-    const endDrag = () => {
-      if (!mode) return
-      const finished = mode
-      mode = null
-      if (finished === 'move') setTriggerValue('moved', { id: photo.id, x: current.x, y: current.y })
-      if (finished === 'resize') setTriggerValue('resized', { id: photo.id, w: current.w, h: current.h })
-      if (finished === 'pan') setTriggerValue('panned', { id: photo.id, ox: current.ox, oy: current.oy })
-    }
-    wrap.onpointerup = endDrag
-    wrap.onpointercancel = endDrag
-
-    root.appendChild(wrap)
-  })
-
-  return () => {
-    root.remove()
-  }
-}
-"""
-
-_photo_board = st.components.v2.component("photo_board", html="<div></div>", js=_PHOTO_BOARD_JS)
-
-
-def render_photo_board(pins: list[dict]) -> None:
-    photos = []
-    for p in pins:
-        uri = _photo_data_uri(p["photo_path"])
-        if uri:
-            photos.append({
-                "id": p["id"], "src": uri, "x": p["x"], "y": p["y"],
-                "w": p.get("w", 140), "h": p.get("h", 140),
-                "ox": p.get("ox", 50), "oy": p.get("oy", 50),
-            })
-
-    owner = is_owner()
-    result = _photo_board(
-        data={
-            "photos": photos,
-            "is_owner": owner,
-            "colors": {"amber": T.AMBER, "navy": T.NAVY_950, "line": T.LINE},
-        },
-        key="photo_board",
-        height=2,
-        on_moved_change=lambda: None,
-        on_resized_change=lambda: None,
-        on_panned_change=lambda: None,
-        on_deleted_change=lambda: None,
-    )
-    # the JS only lets an owner fire these, but check here too so devtools can't write without the password
-    if owner and result.moved:
-        data_store.update_photo_pin(result.moved["id"], x=result.moved["x"], y=result.moved["y"])
-        st.rerun()
-    if owner and result.resized:
-        data_store.update_photo_pin(result.resized["id"], w=result.resized["w"], h=result.resized["h"])
-        st.rerun()
-    if owner and result.panned:
-        data_store.update_photo_pin(result.panned["id"], ox=result.panned["ox"], oy=result.panned["oy"])
-        st.rerun()
-    if owner and result.deleted:
-        data_store.delete_photo_pin(result.deleted)
-        st.rerun()
-
-
 # ---------- page ----------
 
 def main() -> None:
     days = get_days()
     day_info = data_store.load_day_info()
     all_stops = data_store.load_stops()
-    photo_pins = data_store.load_photo_pins()
 
     with st.sidebar:
         sel = selected_day()
@@ -617,7 +488,6 @@ def main() -> None:
         render_owner_panel()
 
     render_map(days, day_info)
-    render_photo_board(photo_pins)
 
 
 if __name__ == "__main__":

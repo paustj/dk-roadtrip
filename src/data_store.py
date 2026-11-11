@@ -1,17 +1,17 @@
 """Load/save per-day journal content: dates/places, free-text stories, and stops (with photos)."""
 import datetime
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+from PIL import Image, ImageOps
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 STOPS_FILE = DATA_DIR / "stops.yaml"
 DAY_TITLES_FILE = DATA_DIR / "day_titles.yaml"
-PHOTO_PINS_FILE = DATA_DIR / "photo_pins.yaml"
 PHOTOS_DIR = DATA_DIR / "photos"
-PINS_PHOTOS_DIR = PHOTOS_DIR / "pins"
 JOURNAL_DIR = DATA_DIR / "journal"
 
 CATEGORIES = ["Attraction", "Food", "Viewpoint", "Accommodation", "Other"]
@@ -130,55 +130,56 @@ def save_photo(day: int, stop_id: str, uploaded_file) -> str:
     return str(dest.relative_to(DATA_DIR.parent))
 
 
-def load_photo_pins() -> list[dict]:
-    """Photos pinned to a lat/lng on the map. New pins start at x/y % of the view until moved."""
-    _ensure_files()
-    if not PHOTO_PINS_FILE.exists():
+# ---------- day photos ----------
+# Each day has a folder data/photos/dayN with resized photos and a thumbs/ subfolder.
+# The folder is the source of truth, so photos can also be added by copying files in.
+
+PHOTO_MAX = 1600  # px, longest side of the stored photo
+THUMB_MAX = 480
+PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def day_photo_dir(day: int) -> Path:
+    return PHOTOS_DIR / f"day{day}"
+
+
+def list_day_photos(day: int) -> list[dict]:
+    folder = day_photo_dir(day)
+    if not folder.exists():
         return []
-    return yaml.safe_load(PHOTO_PINS_FILE.read_text(encoding="utf-8")) or []
+    photos = []
+    for f in sorted(folder.iterdir()):
+        if f.is_file() and f.suffix.lower() in PHOTO_EXTS:
+            thumb = folder / "thumbs" / f"{f.stem}.jpg"
+            photos.append({"id": f.stem, "path": f, "thumb": thumb if thumb.exists() else f})
+    return photos
 
 
-def _save_photo_pins(pins: list[dict]) -> None:
-    _ensure_files()
-    PHOTO_PINS_FILE.write_text(
-        yaml.safe_dump(pins, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
+def count_day_photos(day: int) -> int:
+    return len(list_day_photos(day))
 
 
-def add_photo_pin(uploaded_file, x_pct: float = 50.0, y_pct: float = 50.0) -> str:
-    pin_id = str(uuid.uuid4())[:8]
-    PINS_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = Path(uploaded_file.name).suffix or ".jpg"
-    dest = PINS_PHOTOS_DIR / f"{pin_id}{suffix}"
-    dest.write_bytes(uploaded_file.getbuffer())
-
-    pins = load_photo_pins()
-    pins.append(
-        {
-            "id": pin_id,
-            "photo_path": str(dest.relative_to(DATA_DIR.parent)),
-            "x": x_pct,
-            "y": y_pct,
-            "w": 140,
-            "h": 140,
-            "ox": 50,
-            "oy": 50,
-        }
-    )
-    _save_photo_pins(pins)
-    return pin_id
+def _save_resized(img: Image.Image, dest: Path, max_side: int) -> None:
+    img = img.copy()
+    img.thumbnail((max_side, max_side))
+    img.save(dest, "JPEG", quality=85, optimize=True)
 
 
-def update_photo_pin(pin_id: str, **fields) -> None:
-    """Merge the given fields (lat/lng anchor, w/h size, ox/oy crop offset) into a pin."""
-    pins = load_photo_pins()
-    for pin in pins:
-        if pin["id"] == pin_id:
-            pin.update(fields)
-    _save_photo_pins(pins)
+def add_day_photo(day: int, uploaded_file) -> str:
+    """Store an uploaded photo for a day, rotated upright and shrunk. Returns its id."""
+    folder = day_photo_dir(day)
+    (folder / "thumbs").mkdir(parents=True, exist_ok=True)
+    # timestamp first so photos list in upload order
+    photo_id = f"{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+    img = ImageOps.exif_transpose(Image.open(uploaded_file)).convert("RGB")
+    _save_resized(img, folder / f"{photo_id}.jpg", PHOTO_MAX)
+    _save_resized(img, folder / "thumbs" / f"{photo_id}.jpg", THUMB_MAX)
+    return photo_id
 
 
-def delete_photo_pin(pin_id: str) -> None:
-    pins = [p for p in load_photo_pins() if p["id"] != pin_id]
-    _save_photo_pins(pins)
+def delete_day_photo(day: int, photo_id: str) -> None:
+    for p in list_day_photos(day):
+        if p["id"] == photo_id:
+            p["path"].unlink(missing_ok=True)
+            if p["thumb"] != p["path"]:
+                p["thumb"].unlink(missing_ok=True)

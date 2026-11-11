@@ -224,9 +224,30 @@ section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{ padding
   text-transform:uppercase; margin-top:8px; }}
 .detail .note {{ display:inline-block; margin-top:10px; padding:3px 8px; border:1px solid {AMBER};
   color:{AMBER}; font:500 10.5px 'JetBrains Mono',monospace; letter-spacing:1.5px; text-transform:uppercase; }}
-.story {{ font:400 14.5px/1.6 'Barlow',sans-serif; color:{TEXT}; }}
 .empty {{ font:400 11px 'JetBrains Mono',monospace; color:{MUTED}; letter-spacing:1px;
   border:1px dashed {LINE}; padding:14px; text-align:center; }}
+
+/* photo gallery: thumbnail with an invisible button on top, same trick as day rows */
+[class*="st-key-thumb_"] {{ position:relative; gap:0 !important; }}
+[class*="st-key-thumb_"] [data-testid="stElementContainer"]:has([data-testid="stButton"]) {{
+  position:absolute; inset:0; z-index:2; margin:0;
+}}
+[class*="st-key-thumb_"] [data-testid="stButton"],
+[class*="st-key-thumb_"] [data-testid="stButton"] button {{ width:100%; height:100%; opacity:0; cursor:zoom-in; }}
+img.thumb {{ display:block; width:100%; aspect-ratio:1; object-fit:cover; border:1px solid {LINE};
+  transition:border-color .12s, transform .12s; }}
+[class*="st-key-thumb_"]:hover img.thumb {{ border-color:{AMBER}; }}
+section[data-testid="stSidebar"] [data-testid="stColumn"] {{ min-width:0; }}
+section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"]:has([class*="st-key-thumb_"]) {{ gap:6px; margin-bottom:6px; }}
+
+/* photo viewer dialog */
+[role="dialog"] {{ background:{NAVY_950}; border:1px solid {LINE}; border-radius:0; }}
+[role="dialog"] [data-testid="stElementContainer"]:has([data-testid="stImage"]) {{ align-self:center; }}
+[role="dialog"] [data-testid="stImage"] img {{ max-height:72vh !important; max-width:100% !important;
+  width:auto !important; height:auto !important; margin:0 auto; display:block; border:1px solid {LINE}; }}
+[role="dialog"] [data-testid="stButton"] button {{ background:transparent; border:1px solid {LINE}; border-radius:0;
+  color:{BLUE_LIGHT}; font:500 11px 'JetBrains Mono',monospace; letter-spacing:1.5px; text-transform:uppercase; }}
+[role="dialog"] [data-testid="stButton"] button:hover {{ border-color:{AMBER}; color:{AMBER}; }}
 
 /* buttons */
 section[data-testid="stSidebar"] [data-testid="stButton"] button {{
