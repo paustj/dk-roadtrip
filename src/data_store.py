@@ -131,7 +131,7 @@ def save_photo(day: int, stop_id: str, uploaded_file) -> str:
 
 
 def load_photo_pins() -> list[dict]:
-    """Freely-positioned photos pinned on top of the map (independent of any day)."""
+    """Photos pinned to a lat/lng on the map. New pins start at x/y % of the view until moved."""
     _ensure_files()
     if not PHOTO_PINS_FILE.exists():
         return []
@@ -171,7 +171,7 @@ def add_photo_pin(uploaded_file, x_pct: float = 50.0, y_pct: float = 50.0) -> st
 
 
 def update_photo_pin(pin_id: str, **fields) -> None:
-    """Merge the given fields (x/y position, w/h size, ox/oy crop offset) into a pin."""
+    """Merge the given fields (lat/lng anchor, w/h size, ox/oy crop offset) into a pin."""
     pins = load_photo_pins()
     for pin in pins:
         if pin["id"] == pin_id:
